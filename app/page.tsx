@@ -3,12 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { QRCodeCanvas } from "qrcode.react";
-import {
-  PAYLINK_ABI,
-  PAYLINK_CONTRACT_ADDRESS,
-  ensureArcNetwork,
-  getBrowserProvider,
-} from "@/lib/paylink";
 
 export default function HomePage() {
   const [recipient, setRecipient] = useState("");
@@ -16,11 +10,10 @@ export default function HomePage() {
   const [label, setLabel] = useState("");
 
   const [origin, setOrigin] = useState("");
-  const [paymentId, setPaymentId] = useState<string>("");
-  const [createdTxHash, setCreatedTxHash] = useState<string>("");
-  const [isCreating, setIsCreating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isCreating, setIsCreating] = useState(false);
+  const [linkReady, setLinkReady] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -47,9 +40,24 @@ export default function HomePage() {
   }, [trimmedAmount, parsedAmountNumber]);
 
   const fullPaymentUrl = useMemo(() => {
-    if (!origin || !paymentId) return "";
-    return `${origin}/pay?id=${paymentId}`;
-  }, [origin, paymentId]);
+    if (!origin || !linkReady || !isValidAddress || !isValidAmount) return "";
+
+    const params = new URLSearchParams({
+      to: trimmedRecipient,
+      amount: trimmedAmount,
+      label: trimmedLabel || "Payment request",
+    });
+
+    return `${origin}/pay?${params.toString()}`;
+  }, [
+    origin,
+    linkReady,
+    trimmedRecipient,
+    trimmedAmount,
+    trimmedLabel,
+    isValidAddress,
+    isValidAmount,
+  ]);
 
   async function handleCreatePayment() {
     setErrorMessage("");
@@ -67,58 +75,9 @@ export default function HomePage() {
 
     try {
       setIsCreating(true);
-
-      await ensureArcNetwork();
-
-      const provider = getBrowserProvider();
-      await provider.send("eth_requestAccounts", []);
-
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(
-        PAYLINK_CONTRACT_ADDRESS,
-        PAYLINK_ABI,
-        signer
-      );
-
-      // USDC on Arc testnet is ERC-20 with 6 decimals
-      const amountInUnits = ethers.parseUnits(trimmedAmount, 6);
-
-      const tx = await contract.createPayment(
-        trimmedRecipient,
-        amountInUnits,
-        trimmedLabel || "Payment request"
-      );
-
-      setCreatedTxHash(tx.hash);
-
-      const receipt = await tx.wait();
-
-      let createdId = "";
-
-      for (const log of receipt.logs) {
-        try {
-          const parsed = contract.interface.parseLog(log);
-          if (parsed && parsed.name === "PaymentCreated") {
-            createdId = parsed.args.id.toString();
-            break;
-          }
-        } catch {
-          // ignore unrelated logs
-        }
-      }
-
-      if (!createdId) {
-        throw new Error("Could not extract payment ID from transaction.");
-      }
-
-      setPaymentId(createdId);
+      setLinkReady(true);
     } catch (err: any) {
-      const message =
-        err?.reason ||
-        err?.shortMessage ||
-        err?.message ||
-        "Failed to create payment request.";
-      setErrorMessage(message);
+      setErrorMessage(err?.message || "Failed to create payment link.");
     } finally {
       setIsCreating(false);
     }
@@ -126,19 +85,23 @@ export default function HomePage() {
 
   async function handleCopy() {
     if (!fullPaymentUrl) return;
+
     await navigator.clipboard.writeText(fullPaymentUrl);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+
+    setTimeout(() => {
+      setCopied(false);
+    }, 1500);
   }
 
   function handleReset() {
     setRecipient("");
     setAmount("");
     setLabel("");
-    setPaymentId("");
-    setCreatedTxHash("");
     setCopied(false);
     setErrorMessage("");
+    setIsCreating(false);
+    setLinkReady(false);
   }
 
   return (
@@ -208,8 +171,8 @@ export default function HomePage() {
             </h1>
 
             <p className="mt-4 max-w-2xl text-base text-white/65 sm:text-lg">
-              Clean crypto payment links for modern wallets. Create a payment request,
-              store it on-chain, and share it instantly.
+              Clean crypto payment links for modern wallets. Just enter the
+              wallet, amount, and label, then share the link instantly.
             </p>
           </div>
 
@@ -220,7 +183,7 @@ export default function HomePage() {
                   Create payment link
                 </p>
                 <h2 className="mt-2 text-2xl font-bold text-white">
-                  Generate an on-chain payment request
+                  Generate a crypto payment link instantly
                 </h2>
               </div>
 
@@ -288,7 +251,7 @@ export default function HomePage() {
                       : "bg-gradient-to-r from-cyan-400 to-blue-500 text-[#07111f] shadow-[0_10px_30px_rgba(56,189,248,0.25)] hover:scale-[1.02]"
                   }`}
                 >
-                  {isCreating ? "Creating..." : "Create on-chain link"}
+                  {isCreating ? "Creating..." : "Create payment link"}
                 </button>
 
                 <button
@@ -360,16 +323,16 @@ export default function HomePage() {
 
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-sm text-white/45">Mode</span>
-                    <span className="font-medium text-emerald-200">On-chain request</span>
+                    <span className="font-medium text-emerald-200">Off-chain link creation</span>
                   </div>
                 </div>
 
                 <div className="mt-6 rounded-2xl border border-white/8 bg-black/25 p-4">
                   <p className="mb-2 text-xs uppercase tracking-[0.2em] text-white/35">
-                    Payment ID
+                    Status
                   </p>
                   <p className="break-all text-sm text-cyan-300">
-                    {paymentId || "Not created yet"}
+                    {linkReady ? "Generated off-chain" : "Not created yet"}
                   </p>
                 </div>
 
@@ -378,25 +341,9 @@ export default function HomePage() {
                     Payment link
                   </p>
                   <p className="break-all text-sm text-cyan-300">
-                    {fullPaymentUrl || "Create the payment request to get a shareable link."}
+                    {fullPaymentUrl || "Create the payment link to get a shareable URL."}
                   </p>
                 </div>
-
-                {createdTxHash && (
-                  <div className="mt-4 rounded-2xl border border-white/8 bg-black/25 p-4">
-                    <p className="mb-2 text-xs uppercase tracking-[0.2em] text-white/35">
-                      Create transaction
-                    </p>
-                    <a
-                      href={`https://testnet.arcscan.app/tx/${createdTxHash}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="break-all text-sm text-emerald-300 hover:underline"
-                    >
-                      {createdTxHash}
-                    </a>
-                  </div>
-                )}
 
                 {fullPaymentUrl && (
                   <div className="mt-6 flex flex-col items-center">
@@ -404,7 +351,7 @@ export default function HomePage() {
                       <QRCodeCanvas value={fullPaymentUrl} size={168} />
                     </div>
                     <p className="mt-3 text-center text-sm text-white/45">
-                      Scan on mobile to open the on-chain payment page instantly.
+                      Scan on mobile to open the payment page instantly.
                     </p>
                   </div>
                 )}
