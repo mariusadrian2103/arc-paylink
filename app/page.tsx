@@ -3,11 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { QRCodeCanvas } from "qrcode.react";
+import { supabase } from "@/lib/supabase";
+
+function generatePublicId() {
+  return crypto.randomUUID().slice(0, 8);
+}
 
 export default function HomePage() {
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [label, setLabel] = useState("");
+  const [publicId, setPublicId] = useState("");
 
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
@@ -40,24 +46,9 @@ export default function HomePage() {
   }, [trimmedAmount, parsedAmountNumber]);
 
   const fullPaymentUrl = useMemo(() => {
-    if (!origin || !linkReady || !isValidAddress || !isValidAmount) return "";
-
-    const params = new URLSearchParams({
-      to: trimmedRecipient,
-      amount: trimmedAmount,
-      label: trimmedLabel || "Payment request",
-    });
-
-    return `${origin}/pay?${params.toString()}`;
-  }, [
-    origin,
-    linkReady,
-    trimmedRecipient,
-    trimmedAmount,
-    trimmedLabel,
-    isValidAddress,
-    isValidAmount,
-  ]);
+    if (!origin || !linkReady || !publicId) return "";
+    return `${origin}/pay?id=${publicId}`;
+  }, [origin, linkReady, publicId]);
 
   async function handleCreatePayment() {
     setErrorMessage("");
@@ -75,6 +66,30 @@ export default function HomePage() {
 
     try {
       setIsCreating(true);
+
+      const newPublicId = generatePublicId();
+
+      const { error } = await supabase.from("payment_links").insert([
+        {
+          public_id: newPublicId,
+          recipient_address: trimmedRecipient,
+          amount: trimmedAmount,
+          token_symbol: "USDC",
+          token_address: process.env.NEXT_PUBLIC_USDC_ADDRESS!,
+          chain_id: Number(process.env.NEXT_PUBLIC_ARC_CHAIN_ID!),
+          memo: trimmedLabel || null,
+          status: "pending",
+        },
+      ]);
+
+      if (error) {
+        console.error("Supabase error:", error);
+        setErrorMessage("Failed to save payment link.");
+        setIsCreating(false);
+        return;
+      }
+
+      setPublicId(newPublicId);
       setLinkReady(true);
     } catch (err: any) {
       setErrorMessage(err?.message || "Failed to create payment link.");
@@ -98,6 +113,7 @@ export default function HomePage() {
     setRecipient("");
     setAmount("");
     setLabel("");
+    setPublicId("");
     setCopied(false);
     setErrorMessage("");
     setIsCreating(false);
@@ -323,7 +339,9 @@ export default function HomePage() {
 
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-sm text-white/45">Mode</span>
-                    <span className="font-medium text-emerald-200">Off-chain link creation</span>
+                    <span className="font-medium text-emerald-200">
+                      Off-chain link creation
+                    </span>
                   </div>
                 </div>
 
@@ -332,7 +350,7 @@ export default function HomePage() {
                     Status
                   </p>
                   <p className="break-all text-sm text-cyan-300">
-                    {linkReady ? "Generated off-chain" : "Not created yet"}
+                    {linkReady ? "Saved to Supabase" : "Not created yet"}
                   </p>
                 </div>
 

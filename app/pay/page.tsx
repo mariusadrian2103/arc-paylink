@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
+import { supabase } from "@/lib/supabase";
 import {
   ARC_EXPLORER_TX_BASE,
   USDC_ABI,
@@ -11,9 +12,12 @@ import {
 } from "@/lib/paylink";
 
 type LinkPaymentData = {
+  publicId: string;
   recipient: string;
   amountRaw: string;
   label: string;
+  status: string;
+  txHash: string | null;
 };
 
 export default function PayPage() {
@@ -31,29 +35,43 @@ export default function PayPage() {
         setErrorMessage("");
 
         const params = new URLSearchParams(window.location.search);
+        const publicId = params.get("id")?.trim() || "";
 
-        const to = params.get("to")?.trim() || "";
-        const amount = params.get("amount")?.trim() || "";
-        const label = params.get("label")?.trim() || "Payment request";
-
-        if (!to) {
-          throw new Error("Missing recipient address.");
+        if (!publicId) {
+          throw new Error("Missing payment link ID.");
         }
 
-        if (!ethers.isAddress(to)) {
+        const { data, error } = await supabase
+          .from("payment_links")
+          .select("*")
+          .eq("public_id", publicId)
+          .single();
+
+        if (error || !data) {
+          throw new Error("Payment link not found.");
+        }
+
+        if (!ethers.isAddress(data.recipient_address)) {
           throw new Error("Invalid recipient address.");
         }
 
-        const parsedAmount = Number(amount);
-        if (!amount || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        const parsedAmount = Number(data.amount);
+        if (!data.amount || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
           throw new Error("Invalid payment amount.");
         }
 
         setPayment({
-          recipient: to,
-          amountRaw: amount,
-          label,
+          publicId: data.public_id,
+          recipient: data.recipient_address,
+          amountRaw: data.amount,
+          label: data.memo || "Payment request",
+          status: data.status || "pending",
+          txHash: data.tx_hash || null,
         });
+
+        if (data.tx_hash) {
+          setTxHash(data.tx_hash);
+        }
       } catch (err: any) {
         const message =
           err?.reason ||
@@ -76,6 +94,11 @@ export default function PayPage() {
 
   async function handlePay() {
     if (!payment) return;
+
+    if (payment.status === "paid") {
+      setErrorMessage("This payment link has already been paid.");
+      return;
+    }
 
     try {
       setProcessing(true);
@@ -107,6 +130,29 @@ export default function PayPage() {
       const transferTx = await usdc.transfer(payment.recipient, amountInUnits);
       setTxHash(transferTx.hash);
       await transferTx.wait();
+
+      const { error: updateError } = await supabase
+        .from("payment_links")
+        .update({
+          status: "paid",
+          tx_hash: transferTx.hash,
+          paid_at: new Date().toISOString(),
+        })
+        .eq("public_id", payment.publicId);
+
+      if (updateError) {
+        console.error("Supabase update error:", updateError);
+      }
+
+      setPayment((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "paid",
+              txHash: transferTx.hash,
+            }
+          : prev
+      );
 
       setStatus("Payment successful.");
     } catch (err: any) {
@@ -143,6 +189,15 @@ export default function PayPage() {
             <>
               <div className="space-y-4 rounded-[28px] border border-white/10 bg-[#0a1224]/90 p-6">
                 <div className="flex justify-between gap-4">
+                  <span className="text-white/45">Link ID</span>
+                  <span className="max-w-[70%] break-all text-right font-medium">
+                    {payment.publicId}
+                  </span>
+                </div>
+
+                <div className="h-px bg-white/8" />
+
+                <div className="flex justify-between gap-4">
                   <span className="text-white/45">Recipient</span>
                   <span className="max-w-[70%] break-all text-right font-medium">
                     {payment.recipient}
@@ -176,20 +231,30 @@ export default function PayPage() {
 
                 <div className="flex justify-between gap-4">
                   <span className="text-white/45">Status</span>
-                  <span className="font-medium text-amber-300">Ready to pay</span>
+                  <span
+                    className={`font-medium ${
+                      payment.status === "paid" ? "text-emerald-300" : "text-amber-300"
+                    }`}
+                  >
+                    {payment.status === "paid" ? "Paid" : "Ready to pay"}
+                  </span>
                 </div>
               </div>
 
               <button
                 onClick={handlePay}
-                disabled={processing}
+                disabled={processing || payment.status === "paid"}
                 className={`mt-6 w-full rounded-2xl px-5 py-4 font-semibold transition ${
-                  processing
+                  processing || payment.status === "paid"
                     ? "cursor-not-allowed bg-white/10 text-white/35"
                     : "bg-gradient-to-r from-cyan-400 to-blue-500 text-[#07111f] shadow-[0_10px_30px_rgba(56,189,248,0.25)] hover:scale-[1.01]"
                 }`}
               >
-                {processing ? "Processing..." : `Pay ${formattedAmount} USDC`}
+                {payment.status === "paid"
+                  ? "Already paid"
+                  : processing
+                  ? "Processing..."
+                  : `Pay ${formattedAmount} USDC`}
               </button>
 
               {status && (
