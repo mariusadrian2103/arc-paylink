@@ -2,7 +2,9 @@
 
 import { createAppKit } from "@reown/appkit/react";
 import { defineChain } from "@reown/appkit/networks";
+import type { AppKitNetwork } from "@reown/appkit/networks";
 import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
+import { http } from "viem";
 
 const projectId = process.env.NEXT_PUBLIC_REOWN_PROJECT_ID;
 
@@ -33,9 +35,9 @@ export const arcTestnet = defineChain({
   chainNamespace: "eip155",
   name: "Arc Testnet",
   nativeCurrency: {
-    decimals: 18,
     name: "Ether",
     symbol: "ETH",
+    decimals: 18,
   },
   rpcUrls: {
     default: {
@@ -48,19 +50,25 @@ export const arcTestnet = defineChain({
       url: arcExplorerBase,
     },
   },
+  contracts: {
+    multicall3: {
+      address: "0xca11bde05977b3631167028862be2a173976ca11",
+      blockCreated: 1,
+    },
+  },
 });
 
-export const networks = [arcTestnet];
+export const wagmiNetworks = [arcTestnet];
 
-export const customRpcUrls = {
-  [`eip155:${arcChainId}`]: [{ url: arcRpcUrl }],
-};
+export const appKitNetworks: [AppKitNetwork, ...AppKitNetwork[]] = [arcTestnet];
 
 export const wagmiAdapter = new WagmiAdapter({
   projectId,
-  networks,
+  networks: wagmiNetworks,
   ssr: true,
-  customRpcUrls,
+  transports: {
+    [arcTestnet.id]: http(arcRpcUrl),
+  },
 });
 
 export const metadata = {
@@ -73,9 +81,9 @@ export const metadata = {
 export const appKit = createAppKit({
   adapters: [wagmiAdapter],
   projectId,
-  networks,
+  networks: appKitNetworks,
   metadata,
-  customRpcUrls,
+  defaultNetwork: arcTestnet,
   defaultAccountTypes: { eip155: "eoa" },
   features: {
     analytics: false,
