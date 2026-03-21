@@ -1,14 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ethers } from "ethers";
-import { supabase } from "@/lib/supabase";
+import { BrowserProvider, Contract, ethers } from "ethers";
 import {
-  ARC_EXPLORER_TX_BASE,
+  useAppKit,
+  useAppKitAccount,
+  useAppKitProvider,
+} from "@reown/appkit/react";
+import type { Provider } from "@reown/appkit/react";
+import { supabase } from "@/lib/supabase";
+import ConnectButton from "@/components/ConnectButton";
+import {
   USDC_ABI,
   USDC_ADDRESS,
-  ensureArcNetwork,
-  getBrowserProvider,
+  ensureArcNetworkOnProvider,
+  formatErrorMessage,
+  getExplorerTxUrl,
+  isValidEvmAddress,
 } from "@/lib/paylink";
 
 type LinkPaymentData = {
@@ -20,6 +28,11 @@ type LinkPaymentData = {
   txHash: string | null;
 };
 
+function shorten(address?: string) {
+  if (!address) return "";
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
 export default function PayPage() {
   const [payment, setPayment] = useState<LinkPaymentData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,6 +40,10 @@ export default function PayPage() {
   const [status, setStatus] = useState("");
   const [txHash, setTxHash] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+
+  const { open } = useAppKit();
+  const { walletProvider } = useAppKitProvider<Provider>("eip155");
+  const { address, isConnected } = useAppKitAccount({ namespace: "eip155" });
 
   useEffect(() => {
     async function loadPayment() {
@@ -51,7 +68,7 @@ export default function PayPage() {
           throw new Error("Payment link not found.");
         }
 
-        if (!ethers.isAddress(data.recipient_address)) {
+        if (!isValidEvmAddress(data.recipient_address)) {
           throw new Error("Invalid recipient address.");
         }
 
@@ -73,12 +90,7 @@ export default function PayPage() {
           setTxHash(data.tx_hash);
         }
       } catch (err: any) {
-        const message =
-          err?.reason ||
-          err?.shortMessage ||
-          err?.message ||
-          "Failed to load payment.";
-        setErrorMessage(message);
+        setErrorMessage(formatErrorMessage(err, "Failed to load payment."));
       } finally {
         setLoading(false);
       }
@@ -100,35 +112,39 @@ export default function PayPage() {
       return;
     }
 
+    if (!isConnected || !address || !walletProvider) {
+      setErrorMessage("Please connect a wallet first.");
+      return;
+    }
+
     try {
       setProcessing(true);
       setStatus("");
       setErrorMessage("");
       setTxHash("");
 
-      await ensureArcNetwork();
+      setStatus("Switching network...");
+      await ensureArcNetworkOnProvider(walletProvider);
 
-      const provider = getBrowserProvider();
-      await provider.send("eth_requestAccounts", []);
+      const provider = new BrowserProvider(walletProvider);
       const signer = await provider.getSigner();
-      const userAddress = await signer.getAddress();
+      const connectedAddress = await signer.getAddress();
 
-      const usdc = new ethers.Contract(USDC_ADDRESS, USDC_ABI, signer);
-
-      const decimals: number = await usdc.decimals();
-      const amountInUnits = ethers.parseUnits(payment.amountRaw, decimals);
-
-      const allowance: bigint = await usdc.allowance(userAddress, payment.recipient);
-
-      if (allowance < amountInUnits) {
-        setStatus("Approving USDC...");
-        const approveTx = await usdc.approve(payment.recipient, amountInUnits);
-        await approveTx.wait();
+      if (!connectedAddress) {
+        throw new Error("Wallet is connected but no signer address was found.");
       }
+
+      const usdc = new Contract(USDC_ADDRESS, USDC_ABI, signer);
+
+      setStatus("Checking token decimals...");
+      const decimals = Number(await usdc.decimals());
+      const amountInUnits = ethers.parseUnits(payment.amountRaw, decimals);
 
       setStatus("Sending payment...");
       const transferTx = await usdc.transfer(payment.recipient, amountInUnits);
       setTxHash(transferTx.hash);
+
+      setStatus("Waiting for confirmation...");
       await transferTx.wait();
 
       const { error: updateError } = await supabase
@@ -156,12 +172,7 @@ export default function PayPage() {
 
       setStatus("Payment successful.");
     } catch (err: any) {
-      const message =
-        err?.reason ||
-        err?.shortMessage ||
-        err?.message ||
-        "Payment failed.";
-      setErrorMessage(message);
+      setErrorMessage(formatErrorMessage(err, "Payment failed."));
       setStatus("");
     } finally {
       setProcessing(false);
@@ -181,7 +192,7 @@ export default function PayPage() {
         <div className="rounded-[32px] border border-white/10 bg-white/6 p-8 shadow-[0_10px_60px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
           {loading ? (
             <p className="text-white/70">Loading payment...</p>
-          ) : errorMessage ? (
+          ) : errorMessage && !payment ? (
             <div className="rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-red-200">
               {errorMessage}
             </div>
@@ -230,6 +241,15 @@ export default function PayPage() {
                 <div className="h-px bg-white/8" />
 
                 <div className="flex justify-between gap-4">
+                  <span className="text-white/45">Wallet</span>
+                  <span className="font-medium text-white/85">
+                    {isConnected ? shorten(address) : "Not connected"}
+                  </span>
+                </div>
+
+                <div className="h-px bg-white/8" />
+
+                <div className="flex justify-between gap-4">
                   <span className="text-white/45">Status</span>
                   <span
                     className={`font-medium ${
@@ -241,21 +261,40 @@ export default function PayPage() {
                 </div>
               </div>
 
-              <button
-                onClick={handlePay}
-                disabled={processing || payment.status === "paid"}
-                className={`mt-6 w-full rounded-2xl px-5 py-4 font-semibold transition ${
-                  processing || payment.status === "paid"
-                    ? "cursor-not-allowed bg-white/10 text-white/35"
-                    : "bg-gradient-to-r from-cyan-400 to-blue-500 text-[#07111f] shadow-[0_10px_30px_rgba(56,189,248,0.25)] hover:scale-[1.01]"
-                }`}
-              >
-                {payment.status === "paid"
-                  ? "Already paid"
-                  : processing
-                  ? "Processing..."
-                  : `Pay ${formattedAmount} USDC`}
-              </button>
+              {!isConnected ? (
+                <ConnectButton />
+              ) : (
+                <button
+                  onClick={handlePay}
+                  disabled={processing || payment.status === "paid"}
+                  className={`mt-6 w-full rounded-2xl px-5 py-4 font-semibold transition ${
+                    processing || payment.status === "paid"
+                      ? "cursor-not-allowed bg-white/10 text-white/35"
+                      : "bg-gradient-to-r from-cyan-400 to-blue-500 text-[#07111f] shadow-[0_10px_30px_rgba(56,189,248,0.25)] hover:scale-[1.01]"
+                  }`}
+                >
+                  {payment.status === "paid"
+                    ? "Already paid"
+                    : processing
+                    ? "Processing..."
+                    : `Pay ${formattedAmount} USDC`}
+                </button>
+              )}
+
+              {isConnected && (
+                <button
+                  onClick={() => open({ view: "Account" })}
+                  className="mt-3 w-full rounded-2xl border border-white/15 bg-white/8 px-5 py-3 font-semibold text-white transition hover:bg-white/12"
+                >
+                  Manage wallet
+                </button>
+              )}
+
+              {errorMessage && (
+                <div className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-red-200">
+                  {errorMessage}
+                </div>
+              )}
 
               {status && (
                 <div className="mt-4 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-cyan-100">
@@ -267,7 +306,7 @@ export default function PayPage() {
                 <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
                   <p className="mb-2 text-sm text-white/45">Transaction</p>
                   <a
-                    href={`${ARC_EXPLORER_TX_BASE}${txHash}`}
+                    href={getExplorerTxUrl(txHash)}
                     target="_blank"
                     rel="noreferrer"
                     className="break-all text-sm text-emerald-300 hover:underline"

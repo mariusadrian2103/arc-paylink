@@ -1,84 +1,81 @@
 import { ethers } from "ethers";
 
-export const ARC_CHAIN_ID_DEC = 5042002;
-export const ARC_CHAIN_ID_HEX = "0x4cef52";
-
-export const ARC_NETWORK_PARAMS = {
-  chainId: ARC_CHAIN_ID_HEX,
-  chainName: "Arc Testnet",
-  nativeCurrency: {
-    name: "USDC",
-    symbol: "USDC",
-    decimals: 18,
-  },
-  rpcUrls: ["https://rpc.testnet.arc.network"],
-  blockExplorerUrls: ["https://testnet.arcscan.app"],
-};
-
-export const ARC_EXPLORER_TX_BASE = "https://testnet.arcscan.app/tx/";
-export const ARC_EXPLORER_ADDRESS_BASE = "https://testnet.arcscan.app/address/";
-
-export const PAYLINK_CONTRACT_ADDRESS =
-  process.env.NEXT_PUBLIC_PAYLINK_CONTRACT!;
+export const ARC_CHAIN_ID = Number(process.env.NEXT_PUBLIC_ARC_CHAIN_ID);
+export const ARC_RPC_URL = process.env.NEXT_PUBLIC_ARC_RPC_URL!;
+export const ARC_EXPLORER_BASE = process.env.NEXT_PUBLIC_ARC_EXPLORER_BASE!;
+export const ARC_EXPLORER_TX_BASE =
+  process.env.NEXT_PUBLIC_ARC_EXPLORER_TX_BASE!;
 
 export const USDC_ADDRESS = process.env.NEXT_PUBLIC_USDC_ADDRESS!;
 
-export const PAYLINK_ABI = [
-  "function createPayment(address recipient, uint256 amount, string label) returns (uint256)",
-  "function getPayment(uint256 paymentId) view returns (tuple(address creator,address recipient,uint256 amount,string label,bool paid,address payer))",
-  "function pay(uint256 paymentId)",
-  "function paymentCount() view returns (uint256)",
-  "function usdc() view returns (address)",
-  "event PaymentCreated(uint256 id, address recipient, uint256 amount, string label)",
-  "event PaymentPaid(uint256 id, address payer)",
-] as const;
+export const ARC_CHAIN_HEX = `0x${ARC_CHAIN_ID.toString(16)}`;
 
 export const USDC_ABI = [
-  "function approve(address spender, uint256 value) returns (bool)",
-  "function transfer(address to, uint256 value) returns (bool)",
   "function decimals() view returns (uint8)",
-  "function allowance(address owner, address spender) view returns (uint256)",
+  "function transfer(address to, uint256 value) returns (bool)",
+  "function balanceOf(address owner) view returns (uint256)",
 ] as const;
 
-export async function ensureArcNetwork() {
-  if (!window.ethereum) {
-    throw new Error("MetaMask not found.");
-  }
+type Eip1193Provider = {
+  request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>;
+};
 
-  const currentChainId = await window.ethereum.request({
-    method: "eth_chainId",
-  });
-
-  if (currentChainId?.toLowerCase() === ARC_CHAIN_ID_HEX.toLowerCase()) {
-    return;
-  }
-
+export async function ensureArcNetworkOnProvider(provider: Eip1193Provider) {
   try {
-    await window.ethereum.request({
+    await provider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: ARC_CHAIN_ID_HEX }],
+      params: [{ chainId: ARC_CHAIN_HEX }],
     });
   } catch (switchError: any) {
-    if (switchError?.code === 4902) {
-      await window.ethereum.request({
+    const code = switchError?.code;
+
+    if (code === 4902 || code === -32603) {
+      await provider.request({
         method: "wallet_addEthereumChain",
-        params: [ARC_NETWORK_PARAMS],
+        params: [
+          {
+            chainId: ARC_CHAIN_HEX,
+            chainName: "Arc Testnet",
+            nativeCurrency: {
+              name: "Ether",
+              symbol: "ETH",
+              decimals: 18,
+            },
+            rpcUrls: [ARC_RPC_URL],
+            blockExplorerUrls: [ARC_EXPLORER_BASE],
+          },
+        ],
       });
 
-      await window.ethereum.request({
+      await provider.request({
         method: "wallet_switchEthereumChain",
-        params: [{ chainId: ARC_CHAIN_ID_HEX }],
+        params: [{ chainId: ARC_CHAIN_HEX }],
       });
-    } else {
-      throw switchError;
+
+      return;
     }
+
+    throw switchError;
   }
 }
 
-export function getBrowserProvider() {
-  if (!window.ethereum) {
-    throw new Error("MetaMask not found.");
-  }
+export function formatErrorMessage(err: any, fallback: string) {
+  return (
+    err?.reason ||
+    err?.shortMessage ||
+    err?.message ||
+    fallback
+  );
+}
 
-  return new ethers.BrowserProvider(window.ethereum);
+export function formatUsdcAmount(amountRaw: string) {
+  return amountRaw;
+}
+
+export function getExplorerTxUrl(hash: string) {
+  return `${ARC_EXPLORER_TX_BASE}${hash}`;
+}
+
+export function isValidEvmAddress(address: string) {
+  return ethers.isAddress(address);
 }
