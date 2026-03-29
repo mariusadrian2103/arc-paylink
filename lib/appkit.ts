@@ -1,5 +1,5 @@
 "use client";
-
+import { baseSepolia } from "viem/chains";
 import { createAppKit } from "@reown/appkit/react";
 import { defineChain } from "@reown/appkit/networks";
 import type { AppKitNetwork } from "@reown/appkit/networks";
@@ -58,9 +58,12 @@ export const arcTestnet = defineChain({
   },
 });
 
-export const wagmiNetworks = [arcTestnet];
+export const wagmiNetworks = [arcTestnet, baseSepolia];
 
-export const appKitNetworks: [AppKitNetwork, ...AppKitNetwork[]] = [arcTestnet];
+export const appKitNetworks: [AppKitNetwork, ...AppKitNetwork[]] = [
+  arcTestnet,
+  baseSepolia,
+];
 
 export const wagmiAdapter = new WagmiAdapter({
   projectId,
@@ -68,6 +71,7 @@ export const wagmiAdapter = new WagmiAdapter({
   ssr: true,
   transports: {
     [arcTestnet.id]: http(arcRpcUrl),
+    [baseSepolia.id]: http(),
   },
 });
 

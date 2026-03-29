@@ -20,6 +20,7 @@ import {
 } from "@/lib/paylink";
 
 type LinkPaymentData = {
+  network: string;
   publicId: string;
   recipient: string;
   amountRaw: string;
@@ -78,6 +79,7 @@ export default function PayPage() {
         }
 
         setPayment({
+          network: data.network || "arc",
           publicId: data.public_id,
           recipient: data.recipient_address,
           amountRaw: data.amount,
@@ -104,6 +106,8 @@ export default function PayPage() {
     return payment.amountRaw;
   }, [payment]);
 
+  const isBase = payment?.network === "base";
+
   async function handlePay() {
     if (!payment) return;
 
@@ -124,7 +128,14 @@ export default function PayPage() {
       setTxHash("");
 
       setStatus("Switching network...");
+      if (isBase) {
+        await walletProvider.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x14a34" }], // Base Sepolia
+          });
+          } else {
       await ensureArcNetworkOnProvider(walletProvider);
+      }
 
       const provider = new BrowserProvider(walletProvider);
       const signer = await provider.getSigner();
@@ -134,7 +145,11 @@ export default function PayPage() {
         throw new Error("Wallet is connected but no signer address was found.");
       }
 
-      const usdc = new Contract(USDC_ADDRESS, USDC_ABI, signer);
+      const tokenAddress = isBase
+      ? process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS!
+      : process.env.NEXT_PUBLIC_USDC_ADDRESS!;
+
+      const usdc = new Contract(tokenAddress, USDC_ABI, signer);
 
       setStatus("Checking token decimals...");
       const decimals = Number(await usdc.decimals());
