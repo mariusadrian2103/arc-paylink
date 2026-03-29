@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import AppKitProvider from "@/components/AppKitProvider";
 
 export const metadata: Metadata = {
-  title: "Arc PayLink",
-  description: "Crypto payment links",
+  title: "Zyloo",
+  description: "Stablecoin payment links for Base and Solana.",
 };
 
 export default function RootLayout({
