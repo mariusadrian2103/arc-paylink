@@ -19,9 +19,9 @@ export default function ConnectButton() {
           namespace: "eip155",
         })
       }
-      className="mt-6 w-full rounded-2xl px-5 py-4 font-semibold transition bg-gradient-to-r from-cyan-400 to-blue-500 text-[#07111f] shadow-[0_10px_30px_rgba(56,189,248,0.25)] hover:scale-[1.01]"
+      className="w-full rounded-2xl bg-[linear-gradient(90deg,#38bdf8,#3b82f6,#4f46e5)] px-5 py-4 text-sm font-bold text-white shadow-[0_12px_35px_rgba(59,130,246,0.35)] transition hover:-translate-y-[1px]"
     >
-      {isConnected ? `Wallet: ${shorten(address)}` : "Connect Wallet"}
+      {isConnected ? `Wallet connected: ${shorten(address)}` : "Connect wallet to continue"}
     </button>
   );
 }

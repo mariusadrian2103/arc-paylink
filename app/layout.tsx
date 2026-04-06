@@ -4,7 +4,7 @@ import AppKitProvider from "@/components/AppKitProvider";
 
 export const metadata: Metadata = {
   title: "Zyloo",
-  description: "Stablecoin payment links for Base and Solana.",
+  description: "USDC payment links on Arc Testnet.",
 };
 
 export default function RootLayout({
